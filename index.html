@@ -12,6 +12,10 @@ html,body{height:100%;margin:0}
 body{font-family:Figtree,system-ui,sans-serif;background:var(--bg);display:flex;flex-direction:row;color:var(--ink)}
 main{flex:1;min-width:0;display:flex;background:var(--canvas)}
 canvas{width:100%;height:100%;display:block}
+canvas.off{display:none}
+.tabs{display:flex;gap:4px;margin:0 0 12px;background:#1d1d52;border-radius:10px;padding:3px}
+.tab{flex:1;background:none;border:0;color:var(--mute);padding:8px 6px}
+.tab.on{background:var(--acc);color:#fff}
 aside{width:320px;max-width:100%;background:var(--panel);padding:16px;overflow-y:auto;height:100%}
 h1{font-size:22px;font-weight:800;margin:0 0 4px}
 .sub{color:var(--mute);font-size:13px;margin:0 0 14px}
@@ -36,11 +40,16 @@ input[type=text]{width:100%;font-family:ui-monospace,Menlo,monospace;margin-top:
 </style>
 </head>
 <body>
-<main><canvas id="cv" aria-label="Animated spirograph art"></canvas></main>
+<main><canvas id="cv" aria-label="Animated math art"></canvas><canvas id="gl" class="off" aria-label="Animated fractal"></canvas></main>
 <aside>
   <h1>Spiro Lab</h1>
   <p class="sub">Change the numbers or write your own equation. The art moves live.</p>
-  <div class="row"><label for="mode">Equation</label>
+  <div class="tabs" role="tablist">
+    <button class="tab on" role="tab" data-m="spiro" aria-selected="true">Spirograph</button>
+    <button class="tab" role="tab" data-m="julia" aria-selected="false">Fractal</button>
+    <button class="tab" role="tab" data-m="pend" aria-selected="false">Pendulum</button>
+  </div>
+  <div class="row" id="moderow"><label for="mode">Equation</label>
     <select id="mode" style="width:100%"><option value="spiro">Spirograph (hypotrochoid)</option><option value="custom">Write my own</option></select></div>
   <div class="eq" id="eqbox">
     <label for="ex" class="sub" style="margin:0">x(t)</label><input type="text" id="ex" value="(a-b)*cos(t) + c*cos((a-b)/b*t)">
@@ -65,40 +74,78 @@ input[type=text]{width:100%;font-family:ui-monospace,Menlo,monospace;margin-top:
 </aside>
 <script>
 const DEFS=[
- ['a','Outer ring (a)',1,20,.1,7],
- ['b','Inner ring (b)',1,20,.1,3],
- ['c','Pen offset (c)',0,20,.1,5.5],
- ['layers','Layers',1,16,1,6],
- ['spread','Layer spread',0,2,.01,.15],
- ['twist','Layer twist °',0,180,1,6],
- ['squash','Squash',.2,1.5,.01,1],
- ['turns','Turns (custom mode)',1,60,1,3],
+ ['a','Outer ring (a)',1,20,.1,7,'s'],
+ ['b','Inner ring (b)',1,20,.1,3,'s'],
+ ['c','Pen offset (c)',0,20,.1,5.5,'s'],
+ ['layers','Layers',1,16,1,6,'s'],
+ ['spread','Layer spread',0,2,.01,.15,'s'],
+ ['twist','Layer twist °',0,180,1,6,'s'],
+ ['squash','Squash',.2,1.5,.01,1,'s'],
+ ['turns','Turns (custom mode)',1,60,1,3,'c'],
+ ['fpow','Power',2,5,1,2,'f'],
+ ['cr','Orbit size',.2,1,.01,.79,'f'],
+ ['cang','Start angle °',0,360,1,0,'f'],
+ ['zoom','Zoom',.5,8,.1,1,'f'],
+ ['iter','Detail (iterations)',30,300,5,90,'f'],
+ ['pn','Segments',1,6,1,2,'p'],
+ ['plen','Arm length',.3,2,.01,1,'p'],
+ ['plr','Length ratio',.5,1.5,.01,1,'p'],
+ ['pmass','Mass',.2,5,.1,1,'p'],
+ ['pmr','Mass ratio',.5,2,.01,1,'p'],
+ ['pg','Gravity',0,30,.01,9.81,'p'],
+ ['pdamp','Damping',0,2,.01,0,'p'],
+ ['pang','Start angle °',0,180,1,120,'p'],
+ ['pspread','Angle step °',-90,90,1,0,'p'],
+ ['ptrail','Trail length',200,10000,100,4000,'p'],
+ ['pfade','Trail fade',0,1,.01,.7,'p'],
+ ['pw','Trail width',.5,5,.1,1.6,'p'],
+ ['pbob','Bob size',2,24,1,8,'p'],
+ ['parms','Show arms (1 = yes)',0,1,1,1,'p'],
  ['hue','Start hue',0,360,1,180],
  ['span','Hue range',0,360,1,200],
- ['width','Line width',.3,4,.1,1.2],
+ ['width','Line width',.3,4,.1,1.2,'s'],
  ['speed','Speed',0,3,.05,.6],
  ['wobble','Wobble',0,1,.01,.3],
- ['steps','Detail',400,6000,100,2500]
+ ['steps','Detail',400,6000,100,2500,'s']
 ];
-const P={};const cv=document.getElementById('cv'),ctx=cv.getContext('2d');
+const P={};const cv=document.getElementById('cv'),ctx=cv.getContext('2d'),glc=document.getElementById('gl');
+let GL=null,frameDt=0;
 const sl=document.getElementById('sliders');
 const fmt=v=>Math.round(v*100)/100;
-DEFS.forEach(([k,l,mn,mx,st,v])=>{
+function onParam(k){if(k==='pn'||k==='pang'||k==='pspread')pendReset()}
+DEFS.forEach(([k,l,mn,mx,st,v,g])=>{
   P[k]=v;
-  const d=document.createElement('div');d.className='row';
+  const d=document.createElement('div');d.className='row';d.dataset.g=g||'';
   d.innerHTML=`<label for="n_${k}">${l}<input type="number" class="num" id="n_${k}" min="${mn}" max="${mx}" step="${st}" value="${v}"></label><input type="range" id="s_${k}" aria-label="${l}" min="${mn}" max="${mx}" step="${st}" value="${v}">`;
   sl.appendChild(d);
   const rng=d.querySelector('input[type=range]'),num=d.querySelector('.num');
-  rng.addEventListener('input',()=>{P[k]=+rng.value;num.value=fmt(P[k]);blip((P[k]-mn)/(mx-mn))});
-  num.addEventListener('input',()=>{const x=parseFloat(num.value);if(isNaN(x))return;P[k]=Math.min(mx,Math.max(mn,x));rng.value=P[k];blip((P[k]-mn)/(mx-mn))});
+  rng.addEventListener('input',()=>{P[k]=+rng.value;num.value=fmt(P[k]);onParam(k);blip((P[k]-mn)/(mx-mn))});
+  num.addEventListener('input',()=>{const x=parseFloat(num.value);if(isNaN(x))return;P[k]=Math.min(mx,Math.max(mn,x));rng.value=P[k];onParam(k);blip((P[k]-mn)/(mx-mn))});
   num.addEventListener('change',()=>{num.value=fmt(P[k])});
 });
+{const rows=[...sl.querySelectorAll('.row[data-g="p"]')],pr=document.createElement('div');
+  pr.className='row';pr.dataset.g='p';pr.innerHTML='<button id="prst" style="width:100%">Restart from start angles</button>';rows[rows.length-1].after(pr)}
 function setP(k,v){const d=DEFS.find(x=>x[0]===k);v=Math.min(d[3],Math.max(d[2],v));P[k]=v;
   document.getElementById('s_'+k).value=v;document.getElementById('n_'+k).value=fmt(v)}
 const gcd=(x,y)=>y<1e-9?x:gcd(y,x%y);
 let mode='spiro',fx=null,fy=null,dark=false,paused=false,T=0,last=performance.now();
 const modeEl=document.getElementById('mode'),eqbox=document.getElementById('eqbox'),msg=document.getElementById('eqmsg');
-modeEl.onchange=()=>{mode=modeEl.value;eqbox.classList.toggle('on',mode==='custom');compile()};
+const isFr=()=>mode==='julia',modeRow=document.getElementById('moderow');
+function showCanvas(){const g=mode==='julia'&&GL!==false;glc.classList.toggle('off',!g);cv.classList.toggle('off',g)}
+function updateVis(){document.querySelectorAll('#sliders .row').forEach(r=>{const g=r.dataset.g,sp=mode==='spiro'||mode==='custom';
+  r.style.display=(!g||(g==='f'&&mode==='julia')||(g==='p'&&mode==='pend')||(g==='s'&&sp)||(g==='c'&&mode==='custom'))?'':'none'});showCanvas()}
+function setMode(m){
+  mode=m;if(m==='spiro'||m==='custom')modeEl.value=m;
+  const tab=m==='julia'?'julia':m==='pend'?'pend':'spiro';
+  document.querySelectorAll('.tab').forEach(b=>{const on=b.dataset.m===tab;b.classList.toggle('on',on);b.setAttribute('aria-selected',on)});
+  modeRow.style.display=tab==='spiro'?'':'none';
+  eqbox.classList.toggle('on',m==='custom');
+  updateVis();compile();
+}
+modeEl.onchange=()=>setMode(modeEl.value);
+document.querySelectorAll('.tab').forEach(b=>b.onclick=()=>{setMode(b.dataset.m==='spiro'?modeEl.value:b.dataset.m);blip(.6,true)});
+document.getElementById('prst').onclick=()=>{pendReset();blip(.3,true)};
+updateVis();
 const OK=new Set('t k T a b c PI E sin cos tan asin acos atan atan2 sinh cosh tanh abs sqrt cbrt pow exp log log2 log10 floor ceil round sign min max hypot'.split(' '));
 function safeExpr(e){
   if(e.length>300||!/^[0-9A-Za-z_+\-*\/%().,\s<>=?:!&|]+$/.test(e))return false;
@@ -119,19 +166,163 @@ function compile(){
 function setDark(v){dark=v;document.getElementById('dark').checked=v;document.documentElement.style.setProperty('--canvas',v?'#07071c':'#ffffff')}
 document.getElementById('dark').onchange=e=>setDark(e.target.checked);
 document.getElementById('pause').onclick=e=>{paused=!paused;e.target.textContent=paused?'Play':'Pause'};
-document.getElementById('png').onclick=()=>{draw();const a=document.createElement('a');a.download='spiro.png';a.href=cv.toDataURL();a.click()};
+document.getElementById('png').onclick=()=>{frameDt=0;draw();const a=document.createElement('a');a.download='math-art.png';a.href=(mode==='julia'&&GL?glc:cv).toDataURL();a.click()};
+function looksOk(){
+  const a=P.a,b=Math.max(P.b,.1),isInt=Math.abs(a-Math.round(a))<1e-9&&Math.abs(b-Math.round(b))<1e-9;
+  const turns=mode==='custom'?P.turns:(isInt?b/gcd(Math.round(a),Math.round(b)):30);
+  if(mode==='custom'&&!fx)return true;
+  let x0=1e9,x1=-1e9,y0=1e9,y1=-1e9;
+  for(let j=0;j<600;j++){
+    const t=Math.PI*2*turns*j/600;let x,y;
+    if(mode==='spiro'){const q=(a-b)/b;x=(a-b)*Math.cos(t)+P.c*Math.cos(q*t);y=(a-b)*Math.sin(t)-P.c*Math.sin(q*t)}
+    else{try{x=fx(t,0,T,a,b,P.c);y=fy(t,0,T,a,b,P.c)}catch(e){continue}}
+    if(!isFinite(x)||!isFinite(y))continue;
+    y*=P.squash;x0=Math.min(x0,x);x1=Math.max(x1,x);y0=Math.min(y0,y);y1=Math.max(y1,y);
+  }
+  const sx=x1-x0,sy=y1-y0,mx=Math.max(sx,sy);
+  return isFinite(mx)&&mx>1e-3&&Math.min(sx,sy)>.12*mx;
+}
 document.getElementById('rnd').onclick=()=>{
   const r=(a,b)=>a+Math.random()*(b-a);
-  setP('a',Math.round(r(3,16)));setP('b',Math.round(r(1,10)));setP('c',Math.round(r(1,14)*10)/10);
-  setP('layers',Math.round(r(3,14)));setP('spread',r(0,.6));setP('twist',r(0,40));setP('squash',r(.5,1.2));
   setP('hue',r(0,360));setP('span',r(60,300));setP('wobble',r(0,.8));
+  if(isFr()){
+    setP('cr',r(.5,.85));setP('cang',r(0,360));setP('fpow',Math.random()<.6?2:Math.round(r(3,5)));setP('iter',Math.round(r(70,130)));
+  }else if(mode==='pend'){
+    setP('pn',Math.round(r(2,4)));setP('pang',r(40,175));setP('pspread',r(-40,40));setP('plr',r(.7,1.3));setP('pmr',r(.6,1.6));pendReset();
+  }else{
+    for(let i=0;i<60;i++){
+      setP('a',Math.round(r(3,16)));setP('b',Math.round(r(1,10)));setP('c',Math.round(r(1,14)*10)/10);
+      setP('layers',Math.round(r(3,14)));setP('spread',r(0,.6));setP('twist',r(0,40));setP('squash',r(.5,1.2));
+      if(looksOk())break;
+    }
+  }
   [.1,.3,.5,.7,.95].forEach((n,i)=>setTimeout(()=>blip(n,true),i*90));
 };
+
 function resize(){const r=cv.parentElement.getBoundingClientRect(),dpr=Math.min(devicePixelRatio||1,2);
-  cv.width=r.width*dpr;cv.height=r.height*dpr}
+  cv.width=glc.width=Math.max(1,Math.round(r.width*dpr));cv.height=glc.height=Math.max(1,Math.round(r.height*dpr))}
 addEventListener('resize',resize);resize();
 
+/* ---------- fractal: full-resolution WebGL Julia set ---------- */
+const FS=`
+#ifdef GL_FRAGMENT_PRECISION_HIGH
+precision highp float;
+#else
+precision mediump float;
+#endif
+uniform vec2 uRes,uC;uniform float uScale,uIter,uPow,uPh,uHue,uSpan;
+vec3 hsl(float h,float s,float l){vec3 k=clamp(abs(mod(h*6.+vec3(0.,4.,2.),6.)-3.)-1.,0.,1.);return l+s*(k-.5)*(1.-abs(2.*l-1.));}
+void main(){
+  vec2 z=(gl_FragCoord.xy-.5*uRes)*uScale,c=uC;
+  float n=0.,r2=0.;bool esc=false;
+  for(int i=0;i<300;i++){
+    if(float(i)>=uIter)break;
+    vec2 w=z;
+    for(int q=1;q<5;q++){if(float(q)>=uPow)break;w=vec2(w.x*z.x-w.y*z.y,w.x*z.y+w.y*z.x);}
+    z=w+c;r2=dot(z,z);
+    if(r2>400.){esc=true;break;}
+    n+=1.;
+  }
+  if(!esc){gl_FragColor=vec4(.04,.04,.157,1.);return;}
+  float mu=n+1.-log(log(r2)/2.)/log(uPow);
+  float t=fract((mu*8.+uPh)/1024.),tri=1.-abs(2.*t-1.);
+  gl_FragColor=vec4(hsl((uHue+uSpan*tri)/360.,.9,.35+.3*tri),1.);
+}`;
+const glU={};
+function initGL(){
+  GL=glc.getContext('webgl',{preserveDrawingBuffer:true,antialias:false})||false;
+  if(!GL){showCanvas();return}
+  const mk=(t,src)=>{const sh=GL.createShader(t);GL.shaderSource(sh,src);GL.compileShader(sh);return sh};
+  const pr=GL.createProgram();
+  GL.attachShader(pr,mk(GL.VERTEX_SHADER,'attribute vec2 p;void main(){gl_Position=vec4(p,0.,1.);}'));
+  GL.attachShader(pr,mk(GL.FRAGMENT_SHADER,FS));GL.linkProgram(pr);
+  if(!GL.getProgramParameter(pr,GL.LINK_STATUS)){GL=false;showCanvas();return}
+  GL.useProgram(pr);
+  GL.bindBuffer(GL.ARRAY_BUFFER,GL.createBuffer());
+  GL.bufferData(GL.ARRAY_BUFFER,new Float32Array([-1,-1,1,-1,-1,1,1,1]),GL.STATIC_DRAW);
+  const loc=GL.getAttribLocation(pr,'p');GL.enableVertexAttribArray(loc);GL.vertexAttribPointer(loc,2,GL.FLOAT,false,0,0);
+  ['uRes','uC','uScale','uIter','uPow','uPh','uHue','uSpan'].forEach(n=>glU[n]=GL.getUniformLocation(pr,n));
+}
+function drawFractal(){
+  if(GL===null)initGL();
+  if(GL===false){const W=cv.width,H=cv.height;ctx.setTransform(1,0,0,1,0,0);ctx.fillStyle='#fff';ctx.fillRect(0,0,W,H);ctx.fillStyle='#12123a';ctx.textAlign='center';
+    ctx.font=(16*(devicePixelRatio||1))+'px system-ui,sans-serif';ctx.fillText('Fractals need WebGL, which this browser has turned off.',W/2,H/2);return}
+  const W=glc.width,H=glc.height,ang=P.cang*Math.PI/180+T*.25;
+  GL.viewport(0,0,W,H);
+  GL.uniform2f(glU.uRes,W,H);GL.uniform2f(glU.uC,P.cr*Math.cos(ang),P.cr*Math.sin(ang));
+  GL.uniform1f(glU.uScale,3/(P.zoom*Math.min(W,H)));GL.uniform1f(glU.uIter,Math.round(P.iter));
+  GL.uniform1f(glU.uPow,Math.round(P.fpow));GL.uniform1f(glU.uPh,T*40);GL.uniform1f(glU.uHue,P.hue);GL.uniform1f(glU.uSpan,P.span);
+  GL.drawArrays(GL.TRIANGLE_STRIP,0,4);
+}
+
+/* ---------- double (and multi) pendulum ---------- */
+const CAP=20000,PT={th:[],om:[],L:[],m:[],n:0,buf:new Float32Array(CAP*2),head:0,count:0};
+function pendReset(){
+  const n=Math.round(P.pn);PT.n=n;PT.th=[];PT.om=[];
+  for(let i=0;i<n;i++){PT.th.push((P.pang+i*P.pspread)*Math.PI/180);PT.om.push(0)}
+  PT.count=0;PT.head=0;
+}
+function pendAcc(th,om,n,L,m,out){
+  const ms=new Array(n+1).fill(0),M=[];
+  for(let i=n-1;i>=0;i--)ms[i]=ms[i+1]+m[i];
+  for(let i=0;i<n;i++){
+    const row=new Array(n+1);let r=-ms[i]*P.pg*L[i]*Math.sin(th[i])-P.pdamp*om[i];
+    for(let j=0;j<n;j++){const mm=ms[Math.max(i,j)]*L[i]*L[j];row[j]=mm*Math.cos(th[i]-th[j]);r-=mm*Math.sin(th[i]-th[j])*om[j]*om[j]}
+    row[n]=r;M.push(row);
+  }
+  for(let c=0;c<n;c++){
+    let p=c;for(let r=c+1;r<n;r++)if(Math.abs(M[r][c])>Math.abs(M[p][c]))p=r;
+    [M[c],M[p]]=[M[p],M[c]];
+    for(let r=c+1;r<n;r++){const f=M[r][c]/M[c][c];for(let k=c;k<=n;k++)M[r][k]-=f*M[c][k]}
+  }
+  for(let i=n-1;i>=0;i--){let v=M[i][n];for(let j=i+1;j<n;j++)v-=M[i][j]*out[j];out[i]=v/M[i][i]}
+}
+function pendStep(h){
+  const n=PT.n,L=PT.L,m=PT.m;
+  const f=y=>{const a=new Array(n);pendAcc(y.slice(0,n),y.slice(n),n,L,m,a);return y.slice(n).concat(a)};
+  const add=(y,k,s)=>y.map((v,i)=>v+k[i]*s),y0=PT.th.concat(PT.om);
+  const k1=f(y0),k2=f(add(y0,k1,h/2)),k3=f(add(y0,k2,h/2)),k4=f(add(y0,k3,h));
+  const y1=y0.map((v,i)=>v+h/6*(k1[i]+2*k2[i]+2*k3[i]+k4[i]));
+  PT.th=y1.slice(0,n);PT.om=y1.slice(n);
+}
+function drawPendulum(){
+  const W=cv.width,H=cv.height,S=Math.min(W,H),dpr=devicePixelRatio||1;
+  if(PT.n!==Math.round(P.pn)||!PT.th.length)pendReset();
+  const n=PT.n;PT.L=[];PT.m=[];let Lt=0;
+  for(let i=0;i<n;i++){PT.L.push(P.plen*Math.pow(P.plr,i));PT.m.push(P.pmass*Math.pow(P.pmr,i));Lt+=PT.L[i]}
+  const dts=frameDt*P.speed*1.6;
+  if(dts>0){
+    const steps=Math.min(80,Math.ceil(dts/.004)),h=dts/steps;
+    for(let s=0;s<steps;s++){
+      pendStep(h);
+      let x=0,y=0;for(let i=0;i<n;i++){x+=PT.L[i]*Math.sin(PT.th[i]);y+=PT.L[i]*Math.cos(PT.th[i])}
+      if(!isFinite(x)||!isFinite(y)){pendReset();break}
+      PT.buf[PT.head*2]=x;PT.buf[PT.head*2+1]=y;PT.head=(PT.head+1)%CAP;PT.count=Math.min(CAP,PT.count+1);
+    }
+  }
+  ctx.setTransform(1,0,0,1,0,0);ctx.fillStyle=dark?'#07071c':'#ffffff';ctx.fillRect(0,0,W,H);
+  const sc=S*.44/Lt,cx=W/2,cy=H/2,cnt=Math.min(PT.count,Math.round(P.ptrail)),lit=dark?62:46;
+  ctx.lineCap='round';ctx.lineJoin='round';ctx.lineWidth=P.pw*dpr;
+  const chunks=Math.min(140,Math.max(1,cnt-1)),at=i=>(((PT.head-cnt+i)%CAP)+CAP)%CAP*2;
+  for(let c=0;c<chunks&&cnt>1;c++){
+    const i0=Math.floor(c*(cnt-1)/chunks),i1=Math.floor((c+1)*(cnt-1)/chunks),u=(c+1)/chunks;
+    ctx.strokeStyle='hsla('+((P.hue+P.span*u)%360)+',90%,'+lit+'%,'+Math.max(.04,1-P.pfade*(1-u))+')';
+    ctx.beginPath();let q=at(i0);ctx.moveTo(cx+PT.buf[q]*sc,cy+PT.buf[q+1]*sc);
+    for(let i=i0+1;i<=i1;i++){q=at(i);ctx.lineTo(cx+PT.buf[q]*sc,cy+PT.buf[q+1]*sc)}
+    ctx.stroke();
+  }
+  const ink=dark?'rgba(207,207,245,.75)':'rgba(18,18,58,.7)',pts=[];let x=0,y=0;
+  for(let i=0;i<n;i++){x+=PT.L[i]*Math.sin(PT.th[i]);y+=PT.L[i]*Math.cos(PT.th[i]);pts.push([cx+x*sc,cy+y*sc])}
+  if(P.parms>=1){ctx.strokeStyle=ink;ctx.lineWidth=2*dpr;ctx.beginPath();ctx.moveTo(cx,cy);pts.forEach(q=>ctx.lineTo(q[0],q[1]));ctx.stroke()}
+  pts.forEach((q,i)=>{
+    ctx.fillStyle='hsl('+((P.hue+P.span*(i+1)/n)%360)+',90%,'+lit+'%)';ctx.strokeStyle=ink;ctx.lineWidth=1.5*dpr;
+    ctx.beginPath();ctx.arc(q[0],q[1],Math.max(2,P.pbob*dpr*Math.sqrt(PT.m[i]/P.pmass)),0,Math.PI*2);ctx.fill();ctx.stroke();
+  });
+  ctx.fillStyle=ink;ctx.beginPath();ctx.arc(cx,cy,3*dpr,0,Math.PI*2);ctx.fill();
+}
 function draw(){
+  if(mode==='julia'){drawFractal();return}
+  if(mode==='pend'){drawPendulum();return}
   const W=cv.width,H=cv.height,S=Math.min(W,H);
   ctx.setTransform(1,0,0,1,0,0);
   ctx.fillStyle=dark?'#07071c':'#ffffff';ctx.fillRect(0,0,W,H);
@@ -159,6 +350,8 @@ function draw(){
     }
     pts.push(arr);
   }
+  if(maxR<1e-3){ctx.setTransform(1,0,0,1,0,0);ctx.fillStyle=dark?'#cfcff5':'#12123a';ctx.font=(16*(devicePixelRatio||1))+'px Figtree,system-ui,sans-serif';ctx.textAlign='center';
+    ctx.fillText('This combination draws a single point. Try changing a or b.',W/2,H/2);return}
   const sc=S*.46/maxR;
   ctx.setTransform(sc,0,0,sc,W/2,H/2);
   ctx.lineWidth=P.width*(devicePixelRatio||1)/sc;ctx.lineJoin='round';
@@ -206,14 +399,17 @@ function initAudio(){
 function updateAudio(){
   if(!A)return;
   const now=AC.currentTime,tc=.25,live=soundOn&&!paused&&P.speed>0;
-  const base=Math.round(P.a*.8),idx=[base,base+2,Math.round(P.b)+5,base+7];
+  let sa=P.a,sb=P.b,sc=P.c;
+  if(isFr()){sa=9+7*Math.sin(P.cang*Math.PI/180+T*.25);sb=2+P.fpow*2;sc=P.iter/20}
+  else if(mode==='pend'&&PT.th.length){const l=PT.n-1;sa=9+7*Math.sin(PT.th[l]);sb=2+PT.n*2;sc=4+Math.min(8,Math.abs(PT.om[l]))}
+  const base=Math.round(sa*.8),idx=[base,base+2,Math.round(sb)+5,base+7];
   A.vs.forEach((v,i)=>v.pair.forEach(o=>o.frequency.setTargetAtTime(note(idx[i]),now,tc)));
   A.vs[3].g.gain.setTargetAtTime(P.layers/16*.22,now,.3);
   A.vib.gain.setTargetAtTime(4+P.wobble*22,now,.2);
   A.lfo.frequency.setTargetAtTime(1.5+P.speed*2.5,now,.2);
   A.tl.frequency.setTargetAtTime(.15+P.speed*.6,now,.2);
   A.tg.gain.setTargetAtTime(.06+P.wobble*.14,now,.2);
-  A.filt.frequency.setTargetAtTime(500+P.c*90+P.hue*2+(Math.sin(T*.9)+1)*350*(.4+P.wobble),now,.15);
+  A.filt.frequency.setTargetAtTime(500+sc*90+P.hue*2+(Math.sin(T*.9)+1)*350*(.4+P.wobble),now,.15);
   A.filt.Q.setTargetAtTime(.5+P.squash*1.2,now,.2);
   if(A.pan)A.pan.pan.setTargetAtTime(Math.sin(T*.5)*.5,now,.2);
   A.master.gain.setTargetAtTime(live?vol.value*.28:0,now,live?.4:.2);
@@ -256,8 +452,8 @@ function applyCode(txt){
     DEFS.forEach(([k])=>{const x=parseFloat(o.p[k]);if(!isNaN(x))setP(k,x)});
     if(typeof o.x==='string')document.getElementById('ex').value=o.x.slice(0,300);
     if(typeof o.y==='string')document.getElementById('ey').value=o.y.slice(0,300);
-    mode=o.m==='custom'?'custom':'spiro';modeEl.value=mode;eqbox.classList.toggle('on',mode==='custom');
-    compile();setDark(!!o.d);blip(.7,true);
+    setMode(['custom','julia','pend'].includes(o.m)?o.m:'spiro');
+    compile();setDark(!!o.d);pendReset();blip(.7,true);
     return true;
   }catch(e){return false}
 }
@@ -272,7 +468,7 @@ if(location.hash.length>1)applyCode(location.hash.slice(1));
 
 function loop(now){
   const dt=Math.min((now-last)/1000,.1);last=now;
-  if(!paused){T+=dt*P.speed;draw()}
+  if(!paused){frameDt=dt;T+=dt*P.speed;draw()}
   updateAudio();
   requestAnimationFrame(loop);
 }
